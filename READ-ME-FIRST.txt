@@ -1,0 +1,108 @@
+HCIS - Government box catch-up
+29 September 2026
+
+
+WHAT THIS IS
+
+  This box has been running the 28 August build. Everything built since then
+  has gone onto the office server only. This brings it level.
+
+  Three double-clicks, in order. About fifteen minutes, most of it waiting.
+
+
+BEFORE YOU START
+
+  Do all three in one sitting. Do not stop after step 1.
+
+  The database updates change how signing in works, and the page currently on
+  this box does not know about the change yet. Between step 1 and step 3 the
+  box is not in a working state. It is only a few minutes, but do not walk
+  away in the middle of it.
+
+
+STEP 1 - the database
+
+  Double-click:  STEP-1-database.bat
+
+  It does three things and tells you about each one.
+
+  First it takes a backup, and refuses to go any further if that fails. The
+  file is written next to these scripts and named with the date and time. If
+  anything at all goes wrong later, that file puts the box back exactly as it
+  was, and the script prints the command to do it.
+
+  Then it applies the eleven updates this box has not had. Each is a single
+  transaction. If one fails it writes nothing, the run stops there, and the
+  ones before it still stand - the box is never left half way between two
+  versions.
+
+  Then it installs the token signing key.
+
+  That last part is the one to understand. From update 31 onwards, signing in
+  issues a signed token, and the database refuses to issue one it cannot sign.
+  The key is not written into these files. It is read off the PostgREST
+  configuration on this machine, so the two cannot end up disagreeing, and the
+  script checks afterwards that the database and PostgREST hold the same key
+  before it reports success.
+
+  If that step is skipped, all eleven updates report success and nobody can
+  sign in. That is why it is inside step 1 rather than left as an instruction.
+
+  You are looking for, at the end:
+
+      signing key ... installed
+      Sign-in is answering without a key error.
+
+  and the beneficiary, care giver and leave record counts unchanged from the
+  ones printed at the start. Nothing is reloaded, so they should match.
+
+
+STEP 2 - the data API
+
+  Double-click:  STEP-2-reload-api.bat
+
+  Restarts PostgREST so it picks up the new functions, and checks by process
+  ID that it actually restarted.
+
+
+STEP 3 - the page itself
+
+  Double-click:  STEP-3-deploy-frontend.bat
+
+  Backs up the current wwwroot, then copies the new one over it.
+
+  It does NOT touch config.js. That file is this server's own - it is what
+  tells the page which database to use - and there is no copy of it in this
+  package. The script checks it is still there afterwards and says so in red
+  if it has gone.
+
+
+ONE CHANGE WORTH KNOWING ABOUT
+
+  The page used to have a database address built into it, left over from the
+  system it was first prototyped on, which it fell back to whenever config.js
+  did not load. That meant a missed file gave you a page that looked healthy
+  and was quietly talking to a database in another country.
+
+  That fallback is gone. If config.js is missing the page now stops and says
+  so in plain English, naming the file. It cannot silently use the wrong
+  database any more.
+
+
+IF SOMETHING GOES WRONG
+
+  Stop and send me what is on screen. Every failure path in step 1 prints the
+  exact command to restore the backup it took at the start, and none of them
+  leave a partly applied update behind.
+
+
+WHAT WAS TESTED BEFORE THIS WAS SENT
+
+  A copy of this box was rebuilt here - the real schema, then the 21 August
+  and 28 August packages applied in order - and the whole of step 1 was run
+  against it. The eleven updates applied cleanly, the key installed, and an
+  account then signed in and received a valid token.
+
+  The failure paths were tested too: a missing PostgREST configuration, a key
+  that is too short, and a key that is empty. Each one stops, writes nothing,
+  and prints the restore command.
