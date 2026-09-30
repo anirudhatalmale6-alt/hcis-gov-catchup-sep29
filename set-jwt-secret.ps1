@@ -14,11 +14,17 @@ param(
     [string]$Root  = 'C:\HCIS',
     [string]$PgBin = '',
     [string]$Db    = 'hcis_db',
-    [string]$DbUser= 'postgres'
+    [string]$DbUser= 'postgres',
+    # Without this psql stops and asks for the database password, and the
+    # window looks frozen. The catch-up passes it in; this default is here so
+    # the script still works when run on its own.
+    [string]$DbPassword = 'HcisStaging@2026'
 )
 
 $ErrorActionPreference = 'Stop'
 function Say($m, $c = 'Gray') { Write-Host "  $m" -ForegroundColor $c }
+
+if ($DbPassword -and -not $env:PGPASSWORD) { $env:PGPASSWORD = $DbPassword }
 
 # ---- 1. find the PostgREST configuration --------------------------------
 $candidates = @(
