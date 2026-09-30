@@ -80,47 +80,101 @@ if ($before -and ($after -eq $before)) {
 }
 Say "Restarted. It is now process $after (it was $before) - so it really did restart." 'Green'
 
-# ---- the actual proof: ask the API for a column that did not exist before
+# ---- the actual proof: ask the API for something that did not exist before
+#
+# This used to read a column off the payroll_records table without signing in.
+# That check is now WRONG, and worse, wrong in the safe-looking direction: the
+# 15 September change deliberately took the anonymous role's access to every
+# table away, so a correctly updated box answers "permission denied for table
+# payroll_records" and the script used to shout "Do NOT deploy". It cried wolf
+# on exactly the boxes that were fine.
+#
+# So ask something that needs no table privileges at all. The sign-in function
+# is the one thing the anonymous role may still call - it has to be, or nobody
+# could ever log in - and the catch-up REPLACED it so that it hands back an
+# access_token. Ask PostgREST for that column by name, with a username that
+# cannot exist:
+#
+#   * new function in the cache -> 200 and an empty list (no such user)
+#   * old function still cached -> 400, "column ... access_token does not exist"
+#   * no function at all        -> 404 PGRST202, the migrations never ran
+#
+# Nothing is written either way: for an unknown username the function returns
+# before it touches the failed-attempt counter. Verified against the live API.
 Say ''
-Say 'Asking the API for one of the new columns...'
-$key = ''
-$cfg = 'C:\HCIS\wwwroot\config.js'
-if (Test-Path -LiteralPath $cfg) {
-    $m = [regex]::Match((Get-Content -Raw -LiteralPath $cfg), "supabaseKey:\s*'([^']+)'")
-    if ($m.Success) { $key = $m.Groups[1].Value }
+Say 'Asking the API for one of the new fields...'
+
+function Ask-Column($col) {
+    $uri = 'http://localhost:3000/rpc/hcis_login?select=' + $col
+    $body = '{"p_identifier":"zz.schema.probe.nobody","p_password":"x"}'
+    try {
+        $r = Invoke-WebRequest -Uri $uri -Method Post -Body $body `
+                 -ContentType 'application/json' -UseBasicParsing -TimeoutSec 20
+        return @{ Code = [int]$r.StatusCode; Body = $r.Content }
+    } catch {
+        # Getting the status and the body out of a failed request is not the
+        # same in both PowerShells, and this box may have either. Windows
+        # PowerShell 5.1 gives an HttpWebResponse, which has a stream to read.
+        # PowerShell 7 gives an HttpResponseMessage, which has NO
+        # GetResponseStream at all - calling it throws, and then the code and
+        # the body are both lost and this script cannot tell a 400 from a 404.
+        # So take whichever route the object actually offers.
+        $resp = $_.Exception.Response
+        $code = 0
+        if ($resp) { try { $code = [int]$resp.StatusCode } catch { $code = 0 } }
+
+        $body = ''
+        if ($_.ErrorDetails -and $_.ErrorDetails.Message) {
+            $body = $_.ErrorDetails.Message
+        } elseif ($resp -and ($resp | Get-Member -Name GetResponseStream -MemberType Method)) {
+            try {
+                $sr = New-Object IO.StreamReader($resp.GetResponseStream())
+                $body = $sr.ReadToEnd()
+            } catch { $body = '' }
+        }
+        if (-not $code -and -not $body) { $body = $_.Exception.Message }
+        return @{ Code = $code; Body = $body }
+    }
 }
-$headers = @{}
-if ($key) { $headers['apikey'] = $key; $headers['Authorization'] = "Bearer $key" }
+
+$real  = Ask-Column 'access_token'
+# The control. If asking for a column that CANNOT exist also comes back 200,
+# then this test proves nothing and must not be reported as a pass.
+$bogus = Ask-Column 'no_such_column_zz'
 
 $ok = $false
-try {
-    $r = Invoke-WebRequest -Uri 'http://localhost:3000/payroll_records?select=placements,institution_allowance&limit=1' `
-                           -Headers $headers -UseBasicParsing -TimeoutSec 20
-    if ($r.StatusCode -eq 200) { $ok = $true }
-} catch {
-    $resp = $_.Exception.Response
-    if ($resp) {
-        $sr = New-Object IO.StreamReader($resp.GetResponseStream())
-        $body = $sr.ReadToEnd()
-        Say ''
-        Say 'The API refused that request:' 'Red'
-        Say $body
-    } else {
-        Say ''
-        Say ('Could not reach the API: ' + $_.Exception.Message) 'Red'
-    }
+$why = ''
+if ($real.Code -eq 200 -and $bogus.Code -eq 200) {
+    $why = 'This check cannot tell right from wrong on this box - it accepted a field name that does not exist. Send me a photo; do not treat this as a pass.'
+} elseif ($real.Code -eq 200) {
+    $ok = $true
+} elseif ($real.Code -eq 404) {
+    $why = 'The API has no hcis_login function at all - the database step has not run, or not finished. Run STEP-1-database.bat first.'
+} elseif ($real.Code -eq 400) {
+    $why = 'The API is still serving the OLD shape of the sign-in function - the restart did not refresh it. This is the 21 August problem again.'
+} elseif ($real.Code -eq 0) {
+    $why = 'Could not reach the API at all: ' + $real.Body
+} else {
+    $why = ('The API answered ' + $real.Code + ': ' + $real.Body)
 }
 
 Say ''
 if ($ok) {
     Say '============================================================'
-    Say ' GOOD - the API can see the new columns.' 'Green'
+    Say ' GOOD - the API is serving the new shape.' 'Green'
     Say ' Now run deploy-frontend.ps1, then Ctrl+F5 in the browser.'
     Say '============================================================'
 } else {
     Say '============================================================'
-    Say ' The API is running but could not return the new columns.' 'Red'
-    Say ' Do NOT deploy the new build yet - it needs those columns.'
+    if ($real.Code -eq 0) {
+        Say ' The API could not be reached.' 'Red'
+    } else {
+        Say ' The API is running but is NOT serving the new shape.' 'Red'
+    }
+    Say ''
+    Say (' ' + $why) 'Red'
+    Say ''
+    Say ' Do NOT deploy the new build yet.' 'Red'
     Say ' Send me a photo of this window and I will sort it.'
     Say '============================================================'
 }
