@@ -24,7 +24,7 @@ param(
     [string]$DbUser = 'postgres',
     [string]$PgBin  = '',
     [string]$Root   = 'C:\HCIS',
-    [string]$DbPassword = 'HcisStaging@2026'
+    [string]$DbPassword = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -36,7 +36,13 @@ function Say($m, $c = 'Gray') { Write-Host "  $m" -ForegroundColor $c }
 # could be tested, this line did not come with it. It could not show up in
 # testing either, because psql here connects without a password at all.
 # Set only for this process - it is not written anywhere and dies with the run.
-if (-not $env:PGPASSWORD) { $env:PGPASSWORD = $DbPassword }
+# The database password is no longer written into this file - it used to be,
+# and these scripts are published publicly. db-access.ps1 finds it: already in
+# the environment, or saved on this machine by SET-DB-PASSWORD.bat, or it asks
+# once. Without it psql stops and waits for input and the window looks frozen.
+if ($DbPassword) { $env:PGPASSWORD = $DbPassword }
+. (Join-Path $PSScriptRoot 'db-access.ps1')
+if (-not (Set-DbPassword)) { exit 1 }
 function Rule { Write-Host '  ------------------------------------------------------------' }
 
 $MIGRATIONS = @(

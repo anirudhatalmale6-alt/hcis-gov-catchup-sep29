@@ -18,13 +18,19 @@ param(
     # Without this psql stops and asks for the database password, and the
     # window looks frozen. The catch-up passes it in; this default is here so
     # the script still works when run on its own.
-    [string]$DbPassword = 'HcisStaging@2026'
+    [string]$DbPassword = ''
 )
 
 $ErrorActionPreference = 'Stop'
 function Say($m, $c = 'Gray') { Write-Host "  $m" -ForegroundColor $c }
 
-if ($DbPassword -and -not $env:PGPASSWORD) { $env:PGPASSWORD = $DbPassword }
+# The database password is no longer written into this file - it used to be,
+# and these scripts are published publicly. db-access.ps1 finds it: already in
+# the environment, or saved on this machine by SET-DB-PASSWORD.bat, or it asks
+# once. Without it psql stops and waits for input and the window looks frozen.
+if ($DbPassword) { $env:PGPASSWORD = $DbPassword }
+. (Join-Path $PSScriptRoot 'db-access.ps1')
+if (-not (Set-DbPassword)) { exit 1 }
 
 # ---- 1. find the PostgREST configuration --------------------------------
 $candidates = @(
